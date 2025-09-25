@@ -10,7 +10,9 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "oauth:url": "tsx src/oauthCli.ts",
+    "oauth:exchange": "tsx src/oauthCli.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0",

@@ -1,4 +1,7 @@
 import dotenv from "dotenv";
+import fs from "fs/promises";
+import path from "path";
+import { OAuthTokens, refreshAccessToken } from "./oauth.js";
 
 dotenv.config();
 
@@ -14,15 +17,14 @@ export type MiroItem = {
 };
 
 export class MiroClient {
-    private readonly accessToken: string;
+    private accessToken: string;
+    private readonly tokensPath: string;
     private readonly baseUrl: string = "https://api.miro.com/v2";
 
-    constructor(params?: { accessToken?: string }) {
+    constructor(params?: { accessToken?: string; tokensPath?: string }) {
         const tokenFromEnv = process.env.MIRO_ACCESS_TOKEN?.trim();
         this.accessToken = (params?.accessToken ?? tokenFromEnv) || "";
-        if (!this.accessToken) {
-            throw new Error("MIRO_ACCESS_TOKEN is required");
-        }
+        this.tokensPath = params?.tokensPath || process.env.MIRO_TOKENS_PATH || path.resolve(process.cwd(), "miro_tokens.json");
     }
 
     private async request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -36,10 +38,29 @@ export class MiroClient {
             }
         });
         if (!response.ok) {
+            if (response.status === 401 && await this.tryRefreshToken()) {
+                return this.request<T>(path, init);
+            }
             const body = await response.text().catch(() => "");
             throw new Error(`Miro API error ${response.status}: ${body}`);
         }
         return await response.json() as T;
+    }
+
+    private async tryRefreshToken(): Promise<boolean> {
+        try {
+            const raw = await fs.readFile(this.tokensPath, "utf8").catch(() => "");
+            if (!raw) return false;
+            const tokens = JSON.parse(raw) as OAuthTokens;
+            if (!tokens.refresh_token) return false;
+            const newTokens = await refreshAccessToken(tokens.refresh_token);
+            this.accessToken = newTokens.access_token;
+            const merged: OAuthTokens = { ...tokens, ...newTokens };
+            await fs.writeFile(this.tokensPath, JSON.stringify(merged, null, 2), "utf8");
+            return true;
+        } catch (_e) {
+            return false;
+        }
     }
 
     async listBoards(limit: number = 50): Promise<MiroBoard[]> {

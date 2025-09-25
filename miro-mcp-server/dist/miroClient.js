@@ -1,14 +1,16 @@
 import dotenv from "dotenv";
+import fs from "fs/promises";
+import path from "path";
+import { refreshAccessToken } from "./oauth.js";
 dotenv.config();
 export class MiroClient {
     accessToken;
+    tokensPath;
     baseUrl = "https://api.miro.com/v2";
     constructor(params) {
         const tokenFromEnv = process.env.MIRO_ACCESS_TOKEN?.trim();
         this.accessToken = (params?.accessToken ?? tokenFromEnv) || "";
-        if (!this.accessToken) {
-            throw new Error("MIRO_ACCESS_TOKEN is required");
-        }
+        this.tokensPath = params?.tokensPath || process.env.MIRO_TOKENS_PATH || path.resolve(process.cwd(), "miro_tokens.json");
     }
     async request(path, init) {
         const url = `${this.baseUrl}${path}`;
@@ -21,10 +23,31 @@ export class MiroClient {
             }
         });
         if (!response.ok) {
+            if (response.status === 401 && await this.tryRefreshToken()) {
+                return this.request(path, init);
+            }
             const body = await response.text().catch(() => "");
             throw new Error(`Miro API error ${response.status}: ${body}`);
         }
         return await response.json();
+    }
+    async tryRefreshToken() {
+        try {
+            const raw = await fs.readFile(this.tokensPath, "utf8").catch(() => "");
+            if (!raw)
+                return false;
+            const tokens = JSON.parse(raw);
+            if (!tokens.refresh_token)
+                return false;
+            const newTokens = await refreshAccessToken(tokens.refresh_token);
+            this.accessToken = newTokens.access_token;
+            const merged = { ...tokens, ...newTokens };
+            await fs.writeFile(this.tokensPath, JSON.stringify(merged, null, 2), "utf8");
+            return true;
+        }
+        catch (_e) {
+            return false;
+        }
     }
     async listBoards(limit = 50) {
         const data = await this.request(`/boards?limit=${limit}`);
